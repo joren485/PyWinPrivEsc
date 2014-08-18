@@ -1,0 +1,3 @@
+TODO: 
+  1) Replace Pywin32 with, Ctypes 
+  2) Combine with ProcessHollowing, for stealth malware executing as SYSTEM
