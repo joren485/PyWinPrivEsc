@@ -1,5 +1,12 @@
 import win32api, win32pdh, win32process, win32security, win32con, win32profile
 import pywintypes
+import win32com.shell.shell as shell
+import sys
+
+if not shell.IsUserAnAdmin():
+    print "[!] This script should be run as admin!"
+    print "[!] Exiting."
+    sys.exit()
 
 def EnablePrivilege(privilegeStr, token = None):
     """Enable Privilege on token, if no token is given the function gets the token of the current process."""
