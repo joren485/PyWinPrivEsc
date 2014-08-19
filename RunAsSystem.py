@@ -43,7 +43,6 @@ def procids():
 
 def GetLocalSystemProcessToken():
     """Takes a list of pids and checks if the process has a token with SYSTEM user, if so it returns the token handle."""
-    systemsid = win32security.ConvertSidToStringSid(win32security.LookupAccountName(None, "nt authority\\system")[0])
     
     tokenprivs = (win32con.TOKEN_QUERY | win32con.TOKEN_READ | win32con.TOKEN_IMPERSONATE | win32con.TOKEN_QUERY_SOURCE | win32con.TOKEN_DUPLICATE | win32con.TOKEN_ASSIGN_PRIMARY | win32con.TOKEN_EXECUTE)
 
@@ -55,7 +54,7 @@ def GetLocalSystemProcessToken():
             sid = win32security.ConvertSidToStringSid(win32security.GetTokenInformation(PyhToken, win32security.TokenUser)[0])
 
 ##If token SID is the SID of SYSTEM, return the token handle.
-            if sid == systemsid:
+            if sid == "S-1-5-18":
                 win32api.CloseHandle(PyhProcess)
                 return PyhToken
             win32api.CloseHandle(PyhToken)
