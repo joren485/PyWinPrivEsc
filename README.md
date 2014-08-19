@@ -1,4 +1,4 @@
-
+RunAsSystem
 ======================
 
 Privilege escalation Admin > SYSTEM, the PsExec way. 
@@ -8,3 +8,8 @@ This script will (if run with admin privs) give you a command prompt with as NT 
 Dependencies:
  - Pywin32
 
+
+UACBypass
+======================
+
+(semi-)Privilege escalation User > Admin.
