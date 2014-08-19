@@ -13,3 +13,5 @@ UACBypass
 ======================
 
 (semi-)Privilege escalation User > Admin.
+
+Also disables your UAC, and dumps the SAM, SECURITY and SYSTEM files to C:\Temp\.
