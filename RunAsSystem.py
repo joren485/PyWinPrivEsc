@@ -45,8 +45,8 @@ def GetLocalSystemProcessToken():
     """Takes a list of pids and checks if the process has a token with SYSTEM user, if so it returns the token handle."""
     
     tokenprivs = (win32con.TOKEN_QUERY | win32con.TOKEN_READ | win32con.TOKEN_IMPERSONATE | win32con.TOKEN_QUERY_SOURCE | win32con.TOKEN_DUPLICATE | win32con.TOKEN_ASSIGN_PRIMARY | win32con.TOKEN_EXECUTE)
-
-    for pid in procids():
+    pids = [pid for pid in sorted(win32process.EnumProcesses(), reverse = True) if pid]
+    for pid in pids:
         try:
             PyhProcess = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION, False, pid)
             PyhToken = win32security.OpenProcessToken(PyhProcess, tokenprivs)
@@ -55,13 +55,14 @@ def GetLocalSystemProcessToken():
 
 ##If token SID is the SID of SYSTEM, return the token handle.
             if sid == "S-1-5-18":
+                print "[+] Using PID: " + str(pid)
                 win32api.CloseHandle(PyhProcess)
                 return PyhToken
             win32api.CloseHandle(PyhToken)
             win32api.CloseHandle(PyhProcess)
 
         except pywintypes.error,e :
-            print "[!] Error:" + str(e[2])
+            print "[!] Error: " + str(e[2]) + " With PID: " + str(pid)
 
 
 ##Enable SE_DEBUG_NAME(debugprivileges) on the current process.
